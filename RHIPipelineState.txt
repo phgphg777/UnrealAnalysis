@@ -1,0 +1,381 @@
+
+
+class FD3D11StateCacheBase
+{
+public:
+	enum ESRV_Type
+	{
+		SRV_Unknown,
+		SRV_Dynamic,
+		SRV_Static,
+	};
+
+	bool bDepthBoundsEnabled = false;
+	float DepthBoundsMin = 0.0f;
+	float DepthBoundsMax = 1.0f;
+
+protected:
+	ID3D11DeviceContext* Direct3DDeviceIMContext;
+
+	// Shader Resource Views Cache
+	ID3D11ShaderResourceView* CurrentShaderResourceViews[SF_NumStandardFrequencies][D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT];
+
+	// Rasterizer State Cache
+	ID3D11RasterizerState* CurrentRasterizerState;
+
+	// Depth Stencil State Cache
+	uint32 CurrentReferenceStencil;
+	ID3D11DepthStencilState* CurrentDepthStencilState;
+
+	// Shader Cache
+	ID3D11VertexShader* CurrentVertexShader;
+	ID3D11HullShader* CurrentHullShader;
+	ID3D11DomainShader* CurrentDomainShader;
+	ID3D11GeometryShader* CurrentGeometryShader;
+	ID3D11PixelShader* CurrentPixelShader;
+	ID3D11ComputeShader* CurrentComputeShader;
+
+	// Blend State Cache
+	float CurrentBlendFactor[4];
+	uint32 CurrentBlendSampleMask;
+	ID3D11BlendState* CurrentBlendState;
+	
+	// Viewport
+	uint32			CurrentNumberOfViewports;
+	D3D11_VIEWPORT CurrentViewport[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+
+
+	// Vertex Buffer State
+	struct FD3D11VertexBufferState
+	{
+		ID3D11Buffer* VertexBuffer;
+		uint32 Stride;
+		uint32 Offset;
+	} CurrentVertexBuffers[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+
+	// Index Buffer State
+	ID3D11Buffer* CurrentIndexBuffer;
+	DXGI_FORMAT CurrentIndexFormat;
+	uint32 CurrentIndexOffset;
+
+	// Primitive Topology State
+	D3D11_PRIMITIVE_TOPOLOGY CurrentPrimitiveTopology;
+
+	// Input Layout State
+	ID3D11InputLayout* CurrentInputLayout;
+
+	uint16 StreamStrides[MaxVertexElementCount];
+
+	// Sampler State
+	ID3D11SamplerState* CurrentSamplerStates[SF_NumStandardFrequencies][D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT];
+
+	// Constant Buffer State
+	struct FD3D11ConstantBufferState
+	{
+		ID3D11Buffer* Buffer;
+		uint32 FirstConstant;
+		uint32 NumConstants;
+	} CurrentConstantBuffers[SF_NumStandardFrequencies][D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
+
+	bool bAlwaysSetIndexBuffers;
+};
+typedef FD3D11StateCacheBase FD3D11StateCache;
+
+
+class IRHICommandContextPSOFallback : public IRHICommandContext {};
+class D3D11RHI_API FD3D11DynamicRHI : public FDynamicRHI, public IRHICommandContextPSOFallback
+{
+	FD3D11StateCache StateCache;
+}
+
+------------------------------------------------------------------------------------------------------
+
+class FRHIShader : public FRHIResource
+{
+	FString ShaderName;
+	FSHAHash Hash;
+};
+class FRHIVertexShader : public FRHIShader {};
+class FRHIPixelShader : public FRHIShader {};
+
+class FD3D11BlendState : public FRHIBlendState : public FRHIResource
+{
+	TRefCountPtr<ID3D11BlendState> Resource;
+};
+class FD3D11DepthStencilState : public FRHIDepthStencilState : public FRHIResource
+{
+	TRefCountPtr<ID3D11DepthStencilState> Resource;
+	FExclusiveDepthStencil AccessType;
+};
+
+struct FBoundShaderStateInput
+{
+	FRHIVertexDeclaration* 		VertexDeclarationRHI = nullptr;
+	FRHIVertexShader* 			VertexShaderRHI = nullptr;
+	FRHIHullShader* 			HullShaderRHI = nullptr;
+	FRHIDomainShader* 			DomainShaderRHI = nullptr;
+	FRHIPixelShader* 			PixelShaderRHI = nullptr;
+	FRHIGeometryShader* 		GeometryShaderRHI = nullptr;
+};
+
+class FGraphicsMinimalPipelineStateInitializer
+{
+	FBoundShaderStateInput		BoundShaderState;
+	FRHIBlendState*				BlendState;
+	FRHIRasterizerState*		RasterizerState;
+	FRHIDepthStencilState*		DepthStencilState;
+	FImmutableSamplerState		ImmutableSamplerState;
+	//bool						bDepthBounds = false;
+	//uint8						Padding[3] = {};
+	EPrimitiveType				PrimitiveType;
+};
+class FGraphicsPipelineStateInitializer final : public FGraphicsMinimalPipelineStateInitializer
+{
+	union {
+		struct {
+			uint16					Reserved			: 15;
+			uint16					bFromPSOFileCache	: 1;
+		};
+		uint16						Flags;
+	};
+	using TRenderTargetFormats		= TStaticArray<TEnumAsByte<EPixelFormat>, MaxSimultaneousRenderTargets>;
+	using TRenderTargetFlags		= TStaticArray<uint32, MaxSimultaneousRenderTargets>;
+	FSHAHash						VertexShaderHash;
+	FSHAHash						PixelShaderHash;
+	FSHAHash						GeometryShaderHash;
+	FSHAHash						HullShaderHash;
+	FSHAHash						DomainShaderHash;
+	uint32							RenderTargetsEnabled;
+	TRenderTargetFormats			RenderTargetFormats;
+	TRenderTargetFlags				RenderTargetFlags;
+	EPixelFormat					DepthStencilTargetFormat;
+	uint32							DepthStencilTargetFlag;
+	ERenderTargetLoadAction			DepthTargetLoadAction;
+	ERenderTargetStoreAction		DepthTargetStoreAction;
+	ERenderTargetLoadAction			StencilTargetLoadAction;
+	ERenderTargetStoreAction		StencilTargetStoreAction;
+	FExclusiveDepthStencil			DepthStencilAccess;
+	uint16							NumSamples;
+};
+
+
+struct RHI_API FPipelineStateStats
+{
+	int64 FirstFrameUsed;
+	int64 LastFrameUsed;
+	uint64 CreateCount;
+	int64 TotalBindCount;
+	uint32 PSOHash;
+};
+class FPipelineState
+{
+	FGraphEventRef CompletionEvent;
+	FPipelineStateStats* Stats;
+};
+class FGraphicsPipelineState : public FPipelineState
+{
+	TRefCountPtr<FRHIGraphicsPipelineState> RHIPipeline;
+	FThreadSafeCounter InUseCount;
+};
+
+class FRHIGraphicsPipelineState : public FRHIResource {};
+class FRHIGraphicsPipelineStateFallBack : public FRHIGraphicsPipelineState
+{
+	FGraphicsPipelineStateInitializer Initializer;
+};
+
+
+SetGraphicsPipelineState(RHICmdList, const FGraphicsPipelineStateInitializer& Initializer, ApplyFlags);
+{
+	FGraphicsPipelineState* PipelineState = PipelineStateCache::GetAndOrCreateGraphicsPipelineState(RHICmdList, Initializer, ApplyFlags);
+	{
+		FGraphicsPipelineState* OutCachedState = nullptr;
+		bool bWasFound = GGraphicsPipelineCache.Find(*Initializer, OutCachedState);
+		return OutCachedState;
+	}
+
+	PipelineState->InUseCount.Increment();
+	
+	RHICmdList.SetGraphicsPipelineState(PipelineState);
+	{
+		PipelineState->AddUse();
+		PipelineState->InUseCount.Decrement();
+		FRHIGraphicsPipelineState* RHIPipelineState = PipelineState->RHIPipeline;
+		
+		GetContext().RHISetGraphicsPipelineState(RHIPipelineState);
+		{
+			IRHICommandContextPSOFallback::RHISetGraphicsPipelineState(RHIPipelineState);
+			{
+				FGraphicsPipelineStateInitializer& PsoInit = 
+					static_cast<FRHIGraphicsPipelineStateFallBack*>(RHIPipelineState) 
+					-> Initializer;
+
+				RHISetBoundShaderState(
+					RHICreateBoundShaderState(
+						PsoInit.BoundShaderState.VertexDeclarationRHI,
+						PsoInit.BoundShaderState.VertexShaderRHI,
+						PsoInit.BoundShaderState.HullShaderRHI,
+						PsoInit.BoundShaderState.DomainShaderRHI,
+						PsoInit.BoundShaderState.PixelShaderRHI,
+						PsoInit.BoundShaderState.GeometryShaderRHI
+					).GetReference()
+				);
+
+				RHISetDepthStencilState(PsoInit.DepthStencilState, 0);
+				{
+					FRHIDepthStencilState* NewStateRHI = _0;
+					uint32 StencilRef = _1;
+
+					FD3D11DepthStencilState* NewState = ResourceCast(NewStateRHI);
+					StateCache.SetDepthStencilState(NewState->Resource, StencilRef);
+					{
+						ID3D11DepthStencilState* State = _0;
+						uint32 RefStencil = _1;
+
+						CurrentDepthStencilState = State;
+						CurrentReferenceStencil = RefStencil;
+						Direct3DDeviceIMContext->OMSetDepthStencilState(State, RefStencil);
+					}
+				}
+				RHISetRasterizerState(PsoInit.RasterizerState);
+				RHISetBlendState(PsoInit.BlendState, FLinearColor(1.0f, 1.0f, 1.0f));
+				GSupportsDepthBoundsTest ? RHIEnableDepthBoundsTest(PsoInit.bDepthBounds) : 0;
+			}
+		}
+	}
+}
+
+
+
+struct FMeshPassProcessorRenderState
+{
+	FRHIBlendState*			BlendState;
+	FRHIDepthStencilState*	DepthStencilState;
+	FExclusiveDepthStencil::Type	DepthStencilAccess;
+	TUniformBufferRef<FViewUniformShaderParameters>	ViewUniformBuffer;
+	TUniformBufferRef<FInstancedViewUniformShaderParameters> InstancedViewUniformBuffer;
+	FUniformBufferRHIParamRef		PassUniformBuffer;
+	uint32							StencilRef;
+};
+
+
+bool FDeferredShadingSceneRenderer::RenderBasePass(FRHICommandListImmediate& RHICmdList, FExclusiveDepthStencil::Type BasePassDepthStencilAccess, IPooledRenderTarget* ForwardScreenSpaceShadowMask, bool bParallelBasePass, bool bRenderLightmapDensity)
+{
+	FViewInfo& View = Views[ViewIndex];
+	TUniformBufferRef<FOpaqueBasePassUniformParameters> BasePassUniformBuffer;
+	CreateOpaqueBasePassUniformBuffer(RHICmdList, View, ForwardScreenSpaceShadowMask, BasePassUniformBuffer);
+	FMeshPassProcessorRenderState DrawRenderState(View, BasePassUniformBuffer);
+	
+	SetupBasePassState(BasePassDepthStencilAccess, ViewFamily.EngineShowFlags.ShaderComplexity, DrawRenderState);
+	{
+		DrawRenderState.SetDepthStencilAccess(BasePassDepthStencilAccess);
+		DrawRenderState.SetBlendState(TStaticBlendStateWriteMask<CW_RGBA, CW_RGBA, CW_RGBA, CW_RGBA>::GetRHI());
+		DrawRenderState.GetDepthStencilAccess() & FExclusiveDepthStencil::DepthWrite ?
+			DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<true, CF_DepthNearOrEqual>::GetRHI()) :
+			DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<false, CF_DepthNearOrEqual>::GetRHI()) ;
+	}
+	
+	Scene->UniformBuffers.UpdateViewUniformBuffer(View);
+	
+	RenderBasePassView(RHICmdList, View, BasePassDepthStencilAccess, DrawRenderState);
+	{
+		FMeshPassProcessorRenderState DrawRenderState(InDrawRenderState);
+		View.ParallelMeshDrawCommandPasses[EMeshPass::BasePass].DispatchDraw(nullptr, RHICmdList);
+		{
+			SubmitMeshDrawCommandsRange(TaskContext.MeshDrawCommands, PrimitiveIdsBuffer, BasePrimitiveIdsOffset, TaskContext.bDynamicInstancing, 0, TaskContext.MeshDrawCommands.Num(), TaskContext.InstanceFactor, RHICmdList);
+			{
+				FMeshDrawCommand::SubmitDraw(*VisibleMeshDrawCommand.MeshDrawCommand, PrimitiveIdsBuffer, PrimitiveIdBufferOffset, InstanceFactor, RHICmdList, StateCache);
+				{
+					const FGraphicsMinimalPipelineStateInitializer& MeshPipelineState = MeshDrawCommand.CachedPipelineId.GetPipelineState();
+
+					FGraphicsPipelineStateInitializer GraphicsPSOInit = MeshPipelineState;
+					RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
+					
+					SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit);
+					{
+						// Above..
+					}
+					StateCache.SetPipelineState(MeshDrawCommand.CachedPipelineId.GetId());
+
+					RHICmdList.SetStencilRef(MeshDrawCommand.StencilRef);
+
+					RHICmdList.DrawIndexedPrimitive(
+						MeshDrawCommand.IndexBuffer,
+						MeshDrawCommand.VertexParams.BaseVertexIndex,
+						0,
+						MeshDrawCommand.VertexParams.NumVertices,
+						MeshDrawCommand.FirstIndex,
+						MeshDrawCommand.NumPrimitives,
+						MeshDrawCommand.NumInstances * InstanceFactor
+					);
+				}
+			}
+		}
+	}
+	
+	RenderEditorPrimitives(RHICmdList, View, BasePassDepthStencilAccess, DrawRenderState, false);
+}
+
+
+
+
+DeferredDecal.usf 완전히 파악하기
+RenderPreStencil 가 왜 필요한가?
+
+
+
+FGBufferData GetGBufferData(float2 UV, bool bGetNormalizedNormal = true)
+{
+#if 0 //METAL_MRT_PROFILE
+	// @todo metal mrt: The deferred renderer isn't keeping these in tiled memory all the time - we don't know when this makes sense
+	// versus just sampling a bound resolved texture
+	float4 GBufferA = FramebufferFetchMRT(1);
+	float4 GBufferB = FramebufferFetchMRT(2);
+	float4 GBufferC = FramebufferFetchMRT(3);
+	float4 GBufferD = FramebufferFetchMRT(4);
+	// @todo metal mrt: We can't framebuffer fetch the depth, can we jam it in somewhere?
+	float CustomNativeDepth = 0.5;
+	#if ALLOW_STATIC_LIGHTING
+		float4 GBufferE = FramebufferFetchMRT(5);
+	#else
+		float4 GBufferE = 1;
+	#endif
+#else	
+	float4 GBufferA = Texture2DSampleLevel(SceneTexturesStruct.GBufferATexture, SceneTexturesStruct.GBufferATextureSampler, UV, 0);
+	float4 GBufferB = Texture2DSampleLevel(SceneTexturesStruct.GBufferBTexture, SceneTexturesStruct.GBufferBTextureSampler, UV, 0);
+	float4 GBufferC = Texture2DSampleLevel(SceneTexturesStruct.GBufferCTexture, SceneTexturesStruct.GBufferCTextureSampler, UV, 0);
+	float4 GBufferD = Texture2DSampleLevel(SceneTexturesStruct.GBufferDTexture, SceneTexturesStruct.GBufferDTextureSampler, UV, 0);
+	float CustomNativeDepth = Texture2DSampleLevel(SceneTexturesStruct.CustomDepthTexture, SceneTexturesStruct.CustomDepthTextureSampler, UV, 0).r;
+
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM4
+	int2 IntUV = (int2)trunc(UV * View.BufferSizeAndInvSize.xy);
+	uint CustomStencil = SceneTexturesStruct.CustomStencilTexture.Load(int3(IntUV, 0)) STENCIL_COMPONENT_SWIZZLE;
+#else
+	uint CustomStencil = 0;
+#endif
+
+	#if ALLOW_STATIC_LIGHTING
+		float4 GBufferE = Texture2DSampleLevel(SceneTexturesStruct.GBufferETexture, SceneTexturesStruct.GBufferETextureSampler, UV, 0);
+	#else
+		float4 GBufferE = 1;
+	#endif
+
+	#if WRITES_VELOCITY_TO_GBUFFER
+		float4 GBufferVelocity = Texture2DSampleLevel(SceneTexturesStruct.GBufferVelocityTexture, SceneTexturesStruct.GBufferVelocityTextureSampler, UV, 0);
+	#else
+		float4 GBufferVelocity = 0;
+	#endif
+#endif
+
+	float SceneDepth = CalcSceneDepth(UV);
+	
+	return DecodeGBufferData(GBufferA, GBufferB, GBufferC, GBufferD, GBufferE, GBufferVelocity, CustomNativeDepth, CustomStencil, SceneDepth, bGetNormalizedNormal, CheckerFromSceneColorUV(UV));
+}
+
+FScreenSpaceData GetScreenSpaceData(float2 UV, bool bGetNormalizedNormal = true)
+{
+	FScreenSpaceData Out;
+	Out.GBuffer = GetGBufferData(UV, bGetNormalizedNormal);
+
+	return Out;
+}

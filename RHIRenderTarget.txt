@@ -1,0 +1,170 @@
+RENDER_TARGET
+
+
+class RENDERER_API FSceneRenderTargets : public FRenderResource
+{
+	FIntPoint BufferSize;
+
+	TRefCountPtr<IPooledRenderTarget> SceneColor[3];
+	TRefCountPtr<IPooledRenderTarget> GBufferA;
+	TRefCountPtr<IPooledRenderTarget> GBufferB;
+	TRefCountPtr<IPooledRenderTarget> GBufferC;
+}
+FSceneRenderTargets& FSceneRenderTargets::Get(FRHICommandListImmediate& RHICmdList)
+{
+	static TGlobalResource<FSceneRenderTargets> SceneRenderTargetsSingleton;
+	return SceneRenderTargetsSingleton;
+}
+
+bForceSeparateTargetAndShaderResource == true
+: "SmallDepthZ", 
+
+
+class FRenderTargetPool : public FRenderResource
+{
+	TArray< TRefCountPtr<FPooledRenderTarget> > PooledRenderTargets;
+	// TArray< FTextureRHIParamRef > TransitionTargets;
+}
+TGlobalResource<FRenderTargetPool> GRenderTargetPool;
+
+struct FPooledRenderTargetDesc
+{
+	FClearValueBinding ClearValue;
+	FIntPoint Extent;	/** In pixels, (0,0) if not set, (x,0) for cube maps, todo: make 3d int vector for volume textures */
+	uint32 Depth;		/** 0, unless it's texture array or volume texture */
+	uint32 ArraySize;
+	bool bIsArray;
+	bool bIsCubemap;
+	uint16 NumMips;
+	uint16 NumSamples;
+	EPixelFormat Format;
+	uint32 Flags;
+	uint32 TargetableFlags;
+	bool bForceSeparateTargetAndShaderResource;
+	const TCHAR* DebugName;
+	// bool AutoWritable;
+	// bool bCreateRenderTargetWriteMask;
+};
+
+struct RENDERCORE_API FPooledRenderTarget : public IPooledRenderTarget
+{
+	FRenderTargetPool* RenderTargetPool;
+	FPooledRenderTargetDesc Desc;
+}
+struct IPooledRenderTarget
+{
+	FSceneRenderTargetItem RenderTargetItem;
+};
+struct FSceneRenderTargetItem
+{
+	FTextureRHIRef TargetableTexture;
+	FTextureRHIRef ShaderResourceTexture;
+	FUnorderedAccessViewRHIRef UAV;
+}
+
+struct FRHIResourceCreateInfo
+{
+	// FResourceBulkDataInterface* BulkData;
+	// FResourceArrayInterface* ResourceArray;
+	FClearValueBinding ClearValueBinding;
+	const TCHAR* DebugName;
+};
+
+
+class RHI_API FRHIResource {}
+class RHI_API FRHITexture : public FRHIResource 
+{
+	FClearValueBinding ClearValue;
+	uint32 NumMips;
+	uint32 NumSamples;
+	EPixelFormat Format;
+	uint32 Flags;
+	// FLastRenderTimeContainer& LastRenderTime;
+	// FLastRenderTimeContainer DefaultLastRenderTime;	
+	FName TextureName;
+};
+class RHI_API FRHITexture2D : public FRHITexture 
+{
+	uint32 SizeX;
+	uint32 SizeY;
+};
+typedef TRefCountPtr<FRHITexture> FTextureRHIRef;
+typedef TRefCountPtr<FRHITexture2D> FTexture2DRHIRef;
+
+
+class FD3D11BaseTexture2D : public FRHITexture2D {};
+class FD3D11BaseShaderResource : public IRefCountedObject
+{
+	EResourceTransitionAccess CurrentGPUAccess;
+}
+class D3D11RHI_API FD3D11TextureBase : public FD3D11BaseShaderResource
+{
+	int32 MemorySize;
+	TRefCountPtr<ID3D11Resource> Resource;
+	TRefCountPtr<ID3D11ShaderResourceView> ShaderResourceView;
+	TArray<TRefCountPtr<ID3D11RenderTargetView> > RenderTargetViews;
+	TRefCountPtr<ID3D11DepthStencilView> DepthStencilViews[4];
+}
+template<typename BaseResourceType = FD3D11BaseTexture2D>
+class D3D11RHI_API TD3D11Texture2D : public BaseResourceType, public FD3D11TextureBase
+{
+}
+typedef TD3D11Texture2D<FRHITexture>              FD3D11Texture;
+typedef TD3D11Texture2D<FD3D11BaseTexture2D>      FD3D11Texture2D;
+
+
+struct FRHIRenderPassInfo
+{
+	struct FColorEntry
+	{
+		FRHITexture* RenderTarget;
+		FRHITexture* ResolveTarget;
+		int32 ArraySlice;
+		uint8 MipIndex;
+		ERenderTargetActions Action;
+	};
+	FColorEntry ColorRenderTargets[8];
+
+	struct FDepthStencilEntry
+	{
+		FRHITexture* DepthStencilTarget;
+		FRHITexture* ResolveTarget;
+		EDepthStencilTargetActions Action;
+		FExclusiveDepthStencil ExclusiveDepthStencil;
+	};
+	FDepthStencilEntry DepthStencilRenderTarget;
+}
+
+class FRHISetRenderTargetsInfo
+{
+	FRHIRenderTargetView ColorRenderTarget[8];	
+	int32 NumColorRenderTargets;
+	bool bClearColor;
+
+	FRHIDepthRenderTargetView DepthStencilRenderTarget;	
+	bool bClearDepth;
+	bool bClearStencil;
+
+	FUnorderedAccessViewRHIRef UnorderedAccessView[8];
+	int32 NumUAVs;
+};
+
+class FRHIRenderTargetView
+{
+	FRHITexture* Texture;
+	uint32 MipIndex;
+	uint32 ArraySliceIndex;
+	ERenderTargetLoadAction LoadAction;
+	ERenderTargetStoreAction StoreAction;
+};
+class FRHIDepthRenderTargetView
+{
+	FRHITexture* Texture;
+	ERenderTargetLoadAction		DepthLoadAction;
+	ERenderTargetStoreAction	DepthStoreAction;
+	ERenderTargetLoadAction		StencilLoadAction;
+	ERenderTargetStoreAction	StencilStoreAction;
+	FExclusiveDepthStencil		DepthStencilAccess;
+};
+
+

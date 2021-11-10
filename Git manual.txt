@@ -1,0 +1,12 @@
+
+
+원격저장소(internet)의 프로젝트 개인저장소에(PC)가져오기:
+개인저장소 폴더로 이동
+git init  -> 로컬저장소등록
+git clone (-b branch_name) git_url (Destination folder)
+
+
+업데이트시:
+git add .
+git commit -m "some message"
+git push /* -u origin master */

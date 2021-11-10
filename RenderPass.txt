@@ -1,0 +1,198 @@
+
+FDeferredShadingSceneRenderer::Render()
+{
+	RenderPrePass(RHICmdList, AfterTasksAreStarted);
+	{
+		PreRenderPrePass(RHICmdList);
+		{
+			SceneContext.BeginRenderingPrePass(RHICmdList, !bDepthWasCleared);
+			{
+				RHICmdList.BeginRenderPass(RPInfo, TEXT("BeginRenderingPrePass"));
+			}
+			RHICmdList.EndRenderPass();
+		}
+		SceneContext.BeginRenderingPrePass(RHICmdList, false);
+		{
+			RHICmdList.BeginRenderPass(RPInfo, TEXT("BeginRenderingPrePass"));
+		}
+
+		SceneContext.FinishRenderingPrePass(RHICmdList);
+		{
+			RHICmdList.EndRenderPass();
+		}
+	}
+
+	RenderOcclusion(RHICmdList);
+	{
+		BeginOcclusionTests(RHICmdList, true);
+		{
+			RHICmdList.BeginRenderPass(RPInfo, TEXT("OcclusionQueries"));
+			RHICmdList.EndRenderPass();
+		}
+	}
+
+	RenderHzb(RHICmdList);
+	{
+		GraphBuilder.Execute(); -> ExecutePass(Pass);   // many times!
+		{
+			RHICmdList.BeginRenderPass( RPInfo, Pass->GetName() );
+			RHICmdList.EndRenderPass();
+		}
+	}
+
+	RenderShadowDepthMaps(RHICmdList);
+	{
+		FSceneRenderer::RenderShadowDepthMapAtlases(RHICmdList);
+		{
+			BeginShadowRenderPass(RHICmdList, true);
+			{
+				InRHICmdList.BeginRenderPass(RPInfo, TEXT("ShadowMapAtlases"));
+			}
+			RHICmdList.EndRenderPass();
+		}
+	}
+
+	GCompositionLighting.ProcessBeforeBasePass(RHICmdList, View, bDBuffer, SSAOLevels);
+	{
+		CompositeContext.Process(Context.FinalOutput.GetPass(), TEXT("Composition_BeforeBasePass"));
+		{
+			FRCPassPostProcessDeferredDecals::Process()
+			{
+				RHICmdList.BeginRenderPass(RPInfo, TEXT("InitialDeferredDecals"));
+				RHICmdList.EndRenderPass();
+			}
+		}
+	}
+
+	SceneContext.BeginRenderingGBuffer(RHICmdList, ColorLoadAction, DepthLoadAction, BasePassDepthStencilAccess, ViewFamily.EngineShowFlags.ShaderComplexity, true, ClearColor);
+	{
+		RHICmdList.BeginRenderPass(RPInfo, TEXT("GBuffer"));
+	}
+	RenderBasePass(RHICmdList, BasePassDepthStencilAccess, ForwardScreenSpaceShadowMask.GetReference(), bDoParallelBasePass, bRenderLightmapDensity);
+	SceneContext.FinishGBufferPassAndResolve(RHICmdList);
+	{
+		RHICmdList.EndRenderPass();
+	}
+
+	RenderVelocities(RHICmdList, SceneContext.SceneVelocity);
+	{
+		BeginVelocityRendering(RHICmdList, VelocityRT, !FVelocityRendering::BasePassCanOutputVelocity(FeatureLevel));
+		{
+			RHICmdList.BeginRenderPass(RPInfo, TEXT("VelocityRendering"));
+		}
+		RHICmdList.EndRenderPass();
+	}
+
+	GCompositionLighting.ProcessAfterBasePass(RHICmdList, Views[ViewIndex]);
+	{
+		CompositeContext.Process(Context.FinalOutput.GetPass(), TEXT("CompositionLighting_AfterBasePass"));
+		{
+			FRCPassPostProcessDeferredDecals::Process()
+			{
+				RenderTargetManager.SetRenderTargetMode(CurrentRenderTargetMode, DecalData.bHasNormal, bPerPixelDBufferMask);
+				{
+					RHICmdList.BeginRenderPass(RPInfo, TEXT("DecalPass"));
+				}
+				RHICmdList.EndRenderPass();
+				RHICmdList.BeginRenderPass(RPInfo, TEXT("ClearStencil"));
+				RHICmdList.EndRenderPass();
+			}
+
+			FRCPassPostProcessAmbientOcclusionSetup::Process()
+			{
+				Context.RHICmdList.BeginRenderPass(RPInfo, TEXT("AmbientOcclusionSetup"));
+				Context.RHICmdList.EndRenderPass();
+			}
+
+			FRCPassPostProcessAmbientOcclusion::Process()  // Two times
+			{
+				ProcessPS(Context, DestRenderTarget, SceneDepthBuffer, ViewRect, TexSize, ShaderQuality, bDoUpsample);
+				{
+					Context.RHICmdList.BeginRenderPass(RPInfo, TEXT("PSAmbientOcclusion"));
+					Context.RHICmdList.EndRenderPass();
+				}
+			}
+
+			FRCPassPostProcessBasePassAO::Process()
+			{
+				Context.RHICmdList.BeginRenderPass(RPInfo, TEXT("BasePassAmbientOcclusion"));
+				Context.RHICmdList.EndRenderPass();
+			}
+		}
+	}
+
+	RHICmdList.BeginRenderPass(RPInfo, TEXT("ClearStencilFromBasePass"));
+	RHICmdList.EndRenderPass();
+
+	ClearTranslucentVolumeLighting(RHICmdList, ViewIndex);
+	{
+		SceneContext.ClearTranslucentVolumeLighting(RHICmdList, ViewIndex);
+		{
+			ClearVolumeTextures<Num3DTextures>(RHICmdList, CurrentFeatureLevel, RenderTargets, ClearColors);
+			{
+				RHICmdList.BeginRenderPass(RPInfo, TEXT("ClearVolumeTextures"));
+				RHICmdList.EndRenderPass();
+			}
+		}
+	}
+
+	RenderLights(RHICmdList);
+	{
+		SceneContext.BeginRenderingSceneColor(RHICmdList, ESimpleRenderTargetMode::EExistingColorAndDepth, FExclusiveDepthStencil::DepthRead_StencilWrite, true);
+		{
+			RHICmdList.BeginRenderPass(RPInfo, TEXT("BeginRenderingSceneColor"));
+		}
+		SceneContext.FinishRenderingSceneColor(RHICmdList);
+		{
+			RHICmdList.EndRenderPass();
+		}
+
+		{  // many times
+			RHICmdList.BeginRenderPass(RPInfo, TEXT("ClearScreenShadowMask"));
+			RHICmdList.EndRenderPass();
+
+			RenderShadowProjections(RHICmdList, &LightSceneInfo, ScreenShadowMaskTexture, bInjectedTranslucentVolume);
+			{
+				FSceneRenderer::RenderShadowProjections(RHICmdList, LightSceneInfo, ScreenShadowMaskTexture, false, false);
+				{
+					RHICmdList.BeginRenderPass(RPInfo, TEXT("RenderShadowProjection"));
+					RHICmdList.EndRenderPass();
+				}
+
+				InjectTranslucentVolumeLighting(RHICmdList, *LightSceneInfo, ProjectedShadowInfo, *ProjectedShadowInfo->DependentView, ViewIndex);  // many times
+				{
+					InjectTranslucentLightArray(RHICmdList, View, LightInjectionData, ViewIndex); 
+					{
+						{  // Two times
+							RHICmdList.BeginRenderPass(RPInfo, TEXT("InjectTranslucentLightArray"));  
+							RHICmdList.EndRenderPass();
+						}
+					}
+				}
+			}
+
+			RenderPreviewShadowsIndicator(RHICmdList, &LightSceneInfo, ScreenShadowMaskTexture, bUsedShadowMaskTexture);
+			{
+				RenderLightFunctionForMaterial(RHICmdList, LightSceneInfo, ScreenShadowMaskTexture, GEngine->PreviewShadowsIndicatorMaterial->GetRenderProxy(), bLightAttenuationCleared, false, true);
+				{
+					RHICmdList.BeginRenderPass(RPInfo, TEXT("RenderLightFunctionForMaterial"));
+					RHICmdList.EndRenderPass();
+				}
+			}
+
+			SceneContext.BeginRenderingSceneColor(RHICmdList, ESimpleRenderTargetMode::EExistingColorAndDepth, FExclusiveDepthStencil::DepthRead_StencilWrite);
+			{
+				RHICmdList.BeginRenderPass(RPInfo, TEXT("BeginRenderingSceneColor"));
+			}
+			RenderLight(RHICmdList, &LightSceneInfo, ScreenShadowMaskTexture, false, true);
+			SceneContext.FinishRenderingSceneColor(RHICmdList);
+			{
+				RHICmdList.EndRenderPass();
+			}
+		}
+	}
+
+	FilterTranslucentVolumeLighting(RHICmdList, Views[ViewIndex], ViewIndex);
+	{
+	}
+}

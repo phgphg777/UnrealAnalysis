@@ -1,0 +1,166 @@
+관련파일들:
+MouseDeltaTracker.cpp
+EditorViewportClient.cpp
+UnrealWidget.cpp
+LevelEditorViewportClient.cpp
+EditorModeManager.cpp
+PlacementMode.cpp
+SnappingUtils.cpp
+ViewportSnappingModule.cpp
+VertexSnapping.cpp
+---------------------------
+EditorModeTools.cpp
+EditorModes.cpp
+EdMode.cpp
+
+
+
+
+static int count = 0;
+if (count++ <= 30)
+{
+	foo();
+}
+if (count == 60)
+	count = 0;
+
+
+FEditorModeTools <-> FEditorViewportClient/FLevelEditorViewportClient <-> UUnrealEdEngine
+
+
+UUnrealEdEngine::SelectActor(AActor* Actor, bool bInSelected, bool bNotify, bool bSelectEvenIfHidden, bool bForceRefresh) ->
+1. GetSelectedActors()->Select( Actor, bInSelected ) ->
+USelection::Select(UObject* InObject) -> USelection::SelectObjectEvent.Broadcast( InObject ) ->
+FEditorModeTools::OnEditorSelectionChanged(UObject* NewSelection) ->
+SetPivotLocation(Actor->GetActorLocation(), false)
+2. NoteSelectionChange() -> UpdatePivotLocationForSelection( true ) -> SetPivot( PivotPoint, false, true )
+
+
+
+class UNREALED_API FEditorModeTools : public FGCObject, public FEditorUndoClient
+{
+	TArray< TSharedPtr<FEdMode> > Modes;
+
+	FWidget::EWidgetMode WidgetMode;
+	FWidget::EWidgetMode OverrideWidgetMode;
+	
+	bool bShowWidget;
+	
+	bool bIsTracking;
+
+
+	bool PivotShown;
+	bool Snapping;
+	bool SnappedActor;
+
+	FVector CachedLocation;
+	FVector PivotLocation;
+	FVector SnappedLocation;
+	FVector GridBase;
+}
+
+FEditorModeTools& GLevelEditorModeTools();
+
+
+class UNREALED_API FEditorViewportClient : public FCommonViewportClient, public FViewElementDrawer, public FGCObject
+{
+   FEditorModeTools* ModeTools = &GLevelEditorModeTools();
+   FWidget* Widget;
+   FMouseDeltaTracker* MouseDeltaTracker;
+
+   bool bShowWidget;
+ }
+
+
+
+struct UNREALED_API FSnapToSurfaceSettings
+{
+	bool bEnabled;
+	float SnapOffsetExtent;
+	bool bSnapRotation;	
+}
+
+class UNREALED_API ULevelEditorViewportSettings
+{
+	uint32 bEnableActorSnap:1;
+	bool bSnapVertices;
+	FSnapToSurfaceSettings SnapToSurface;
+}
+
+class FWidget : public FGCObject
+{
+	bool bSnapEnabled;
+}
+
+
+
+
+class IViewportSnappingModule : public IModuleInterface
+{
+public:
+	virtual void RegisterSnappingPolicy(TSharedPtr<ISnappingPolicy> NewPolicy)=0;
+	virtual void UnregisterSnappingPolicy(TSharedPtr<ISnappingPolicy> PolicyToRemove)=0;
+
+	virtual TSharedPtr<ISnappingPolicy> GetMergedPolicy()=0;
+
+	static TSharedPtr<ISnappingPolicy> GetSnapManager()
+	{
+		IViewportSnappingModule& Module = FModuleManager::LoadModuleChecked<IViewportSnappingModule>("ViewportSnapping");
+		return Module.GetMergedPolicy();
+	}
+};
+class FViewportSnappingModule : public IViewportSnappingModule
+{
+	TSharedPtr<FMergedSnappingPolicy> MergedPolicy;
+
+	virtual TSharedPtr<ISnappingPolicy> GetMergedPolicy() override
+	{
+		return MergedPolicy;
+	}
+};
+
+class FMergedSnappingPolicy : public ISnappingPolicy
+{
+	TArray< TSharedPtr<ISnappingPolicy> > PolicyList;
+
+	virtual void SnapPointToGrid(FVector& Point, const FVector& GridBase) override
+	{
+		for (auto PolicyIt = PolicyList.CreateConstIterator(); PolicyIt; ++PolicyIt)
+		{
+			(*PolicyIt)->SnapPointToGrid(Point, GridBase);
+		}
+	}
+};
+
+class FEditorViewportSnapping : public ISnappingPolicy 
+{
+	FVertexSnappingImpl VertexSnappingImpl;
+}
+
+
+
+FSnappingUtils::DrawSnappingHelpers() ->
+FMergedSnappingPolicy::DrawSnappingHelpers() ->
+FEditorViewportSnapping::DrawSnappingHelpers() ->
+FVertexSnappingImpl::DrawSnappingHelpers()
+
+
+struct FSnapActor
+{
+	AActor* Actor;
+	FBox	AllowedSnappingBox;
+};
+
+class FVertexSnappingImpl
+{
+	TWeakObjectPtr<AActor> ActorVertsToDraw;
+	TMap<TWeakObjectPtr<AActor>, double> ActorVertsToFade;
+}
+
+
+FSnappingUtils::SnapActorsToNearestActor()
+FSnappingUtils::SnapDraggedActorsToNearestVertex()
+FSnappingUtils::SnapDragLocationToNearestVertex()
+FSnappingUtils::SnapLocationToNearestVertex()
+
+

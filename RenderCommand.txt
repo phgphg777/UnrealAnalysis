@@ -1,0 +1,265 @@
+ENQUEUE_RENDER_COMMAND
+
+#define ENQUEUE_RENDER_COMMAND(Type) \
+struct Type##Name \
+{  \
+	static const char* CStr() { return #Type; } \
+	static const TCHAR* TStr() { return TEXT(#Type); } \
+}; \
+EnqueueUniqueRenderCommand<Type##Name>
+
+
+ENQUEUE_RENDER_COMMAND(BeginFrame)
+
+EnqueueUniqueRenderCommand<BeginFrameName>(LAMBDA&& Lambda)
+{
+	typedef TEnqueueUniqueRenderCommandType<BeginFrameName, LAMBDA> EURCType;
+
+	TGraphTask<
+		TEnqueueUniqueRenderCommandType<BeginFrameName, LAMBDA>
+	> :: CreateTask(). ConstructAndDispatchWhenReady (Lambda);
+}
+
+
+CASE 1 (Bypass):
+* ENQUEUE_RENDER_COMMAND(BeginFrame)
+* BeginFrameRenderThread(RHICmdList, CurrentFrameCounter)
+  {
+  	RHICmdList.PushEvent(*FrameString, FColor::Green) {
+  		GetContext().RHIPushEvent(Name, Color);
+  	}
+  	RHICmdList.BeginFrame() {
+  		GetContext().RHIBeginFrame();
+  	}
+  }
+
+
+
+FEngineLoop::Tick()
+{
+	ENQUEUE_RENDER_COMMAND(BeginFrame)(
+	[CurrentFrameCounter](FRHICommandListImmediate& RHICmdList)
+	{
+		BeginFrameRenderThread(RHICmdList, CurrentFrameCounter);
+	});
+
+	ENQUEUE_RENDER_COMMAND(SceneStartFrame)(
+	[Scene](FRHICommandListImmediate& RHICmdList)
+	{
+		Scene->StartFrame();
+	});
+
+	FStats::AdvanceFrame()
+	{
+		ENQUEUE_RENDER_COMMAND(RenderingThreadTickCommand)(
+		[StatsFrame, MasterDisableChangeTagStartFrame](FRHICommandList& RHICmdList)
+		{
+			AdvanceRenderingThreadStats(StatsFrame, MasterDisableChangeTagStartFrame );
+		});
+	}
+
+	ENQUEUE_RENDER_COMMAND(ResetDeferredUpdates)(
+	[](FRHICommandList& RHICmdList)
+	{
+		FDeferredUpdateResource::ResetNeedsUpdate();
+		FlushPendingDeleteRHIResources_RenderThread();
+	});
+
+	// UEditorEngine::Tick()  in case of PIE 
+	GEngine->Tick()
+	{
+		(EditorContext.World()->Tick() && PieContext.World()->Tick()) ||
+		Context.World()->Tick()
+		{
+			BeginTickDrawEvent()
+			{
+				ENQUEUE_RENDER_COMMAND(BeginDrawEventCommand)(
+				[InTickDrawEvent](FRHICommandList& RHICmdList)
+				{
+					// BEGIN_DRAW_EVENTF(RHICmdList, , (*InTickDrawEvent), TEXT("WorldTick"));
+					if(GetEmitDrawEvents()) 
+						InTickDrawEvent->Start(RHICmdList, FColor(0), TEXT("WorldTick"));
+				});
+			}
+
+			Scene->UpdateSpeedTreeWind()
+			{
+				ENQUEUE_RENDER_COMMAND(FUpdateSpeedTreeWindCommand)(
+				[Scene, CurrentTime](FRHICommandListImmediate& RHICmdList)
+				{
+					// LONG
+				});
+			}
+
+			ENQUEUE_RENDER_COMMAND(TickInGamePerfTrackersRT)(
+			[WorldParam](FRHICommandList& RHICmdList)
+			{
+				//Tick game and other thread trackers.
+				for (int32 Tracker = 0; Tracker < (int32)EInGamePerfTrackers::Num; ++Tracker)
+				{
+					WorldParam->PerfTrackers->GetInGamePerformanceTracker((EInGamePerfTrackers)Tracker, EInGamePerfTrackerThreads::RenderThread).Tick();
+				}
+			});
+
+			EndTickDrawEvent()
+			{
+				ENQUEUE_RENDER_COMMAND(EndDrawEventCommand)(
+				[InTickDrawEvent](FRHICommandList& RHICmdList)
+				{
+					STOP_DRAW_EVENT((*InTickDrawEvent));
+					delete InTickDrawEvent;
+				});
+			}
+		}
+
+		GameViewport->Viewport->Draw() 
+		{
+			FSceneViewport::EnqueueBeginRenderFrame()
+			{
+				ENQUEUE_RENDER_COMMAND(SetRenderThreadViewportTarget)(
+				[Viewport = this, RT = RenderTargetTextureRHI](FRHICommandListImmediate& RHICmdList) mutable
+				{
+					Viewport->SetRenderTargetTextureRenderThread(RT);			
+				});
+			}		
+			FViewport::EnqueueBeginRenderFrame()
+			{
+				ENQUEUE_RENDER_COMMAND(BeginDrawingCommand)(
+				[Viewport](FRHICommandListImmediate& RHICmdList)
+				{
+					// FSceneViewport::BeginRenderFrame()
+					Viewport->BeginRenderFrame(RHICmdList);
+				});
+			}
+			ViewportClient->Draw(this, &Canvas)
+			{
+				GetRendererModule().BeginRenderingViewFamily(SceneCanvas,&ViewFamily)
+				{
+					ENQUEUE_RENDER_COMMAND(UpdateDeferredCachedUniformExpressions)(
+					[](FRHICommandList& RHICmdList)
+					{
+						FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions();
+					});
+					ENQUEUE_RENDER_COMMAND(UpdateFastVRamConfig)(
+					[](FRHICommandList& RHICmdList)
+					{
+						GFastVRamConfig.Update();
+					});
+					FSceneRenderer::CreateSceneRenderer(ViewFamily, Canvas->GetHitProxyConsumer())
+					{
+						// Mesh Draw?
+					}
+					ENQUEUE_RENDER_COMMAND(FViewExtensionPreDrawCommand)(
+					[SceneRenderer](FRHICommandListImmediate& RHICmdList)
+					{
+						ViewExtensionPreRender_RenderThread(RHICmdList, SceneRenderer);
+					});
+					ENQUEUE_RENDER_COMMAND(FDrawSceneCommand)(
+					[SceneRenderer](FRHICommandListImmediate& RHICmdList)
+					{
+						RenderViewFamily_RenderThread(RHICmdList, SceneRenderer);
+						FlushPendingDeleteRHIResources_RenderThread();
+					});
+				}
+			}
+			FViewport::EnqueueEndRenderFrame()
+			{
+				ENQUEUE_RENDER_COMMAND(EndDrawingCommand)(
+				[Params](FRHICommandListImmediate& RHICmdList)
+				{
+					ViewportEndDrawing(RHICmdList, Params);
+				});
+			}
+		}
+
+		ENQUEUE_RENDER_COMMAND(TickRenderingTimer)(
+		[bPauseRenderingRealtimeClock, DeltaTime](FRHICommandListImmediate& RHICmdList)
+		{
+			if(!bPauseRenderingRealtimeClock)
+			{
+				// Tick the GRenderingRealtimeClock, unless it's paused
+				GRenderingRealtimeClock.Tick(DeltaTime);
+			}
+			GetRendererModule().TickRenderTargetPool();
+		});
+	} // END OF "GEngine->Tick()"
+
+	FSlateApplication::Get().Tick()
+	{
+		// Call ENQUEUE_RENDER_COMMAND many times..
+	}
+
+	ENQUEUE_RENDER_COMMAND(WaitForOutstandingTasksOnly_for_DelaySceneRenderCompletion)(
+	[](FRHICommandList& RHICmdList)
+	{
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_DelaySceneRenderCompletion_TaskWait);
+		FRHICommandListExecutor::GetImmediateCommandList().ImmediateFlush(EImmediateFlushType::WaitForOutstandingTasksOnly);
+	});
+
+	ENQUEUE_RENDER_COMMAND(EndFrame)(
+	[](FRHICommandListImmediate& RHICmdList)
+	{
+		EndFrameRenderThread(RHICmdList);
+	});
+}
+
+
+	
+
+
+FViewport::Draw() -> ViewportClient->Draw(this, &Canvas) ->
+GetRendererModule().BeginRenderingViewFamily(Canvas,&ViewFamily) ->
+FSceneRenderer::CreateSceneRenderer(ViewFamily, Canvas->GetHitProxyConsumer()) ->
+new FDeferredShadingSceneRenderer(InViewFamily, HitProxyConsumer) -> FSceneRenderer(InViewFamily, HitProxyConsumer) ->
+ViewInfo->Drawer->Draw(ViewInfo,&ViewElementPDI) -> FEditorViewportClient::Draw(View,PDI) ->
+Widget->Render( View, PDI, this ) -> Render_Translate(View, PDI, ViewportClient, WidgetLocation, bDrawWidget) ->
+Render_Axis( View, PDI, , , , , , ,  ) -> DrawCone(PDI, , , , , , , InMaterial->GetRenderProxy(), ) ->
+FDynamicMeshBuilder::Draw()
+{
+	PDI->RegisterDynamicResource(VertexBuffer);
+	PDI->RegisterDynamicResource(IndexBuffer);
+	PDI->RegisterDynamicResource(VertexFactory);
+	BeginSetUniformBufferContents(*PrimitiveUniformBuffer, PrimitiveParams);
+	PDI->RegisterDynamicResource(PrimitiveUniformBuffer);
+	PDI->DrawMesh(Mesh);
+}
+
+FViewElementPDI::RegisterDynamicResource(DynamicResource)
+{
+	ENQUEUE_RENDER_COMMAND(AddViewInfoDynamicResource)(
+	[InViewInfo, DynamicResource](FRHICommandListImmediate& RHICmdList)
+	{
+		InViewInfo->DynamicResources.Add(DynamicResource);
+		DynamicResource->InitPrimitiveResource();
+	});
+}
+
+void BeginSetUniformBufferContents(UniformBuffer, Struct)
+{
+	ENQUEUE_RENDER_COMMAND(SetUniformBufferContents)(
+	[UniformBufferPtr, Struct](FRHICommandListImmediate& RHICmdList)
+	{
+		UniformBufferPtr->SetContents(Struct);
+	});
+}
+
+FViewElementPDI::DrawMesh(Mesh)
+{
+	ENQUEUE_RENDER_COMMAND(FCopyDynamicPrimitiveShaderData)(
+	[NewMesh, DynamicPrimitiveShaderDataForRT, FeatureLevel](FRHICommandListImmediate& RHICmdList)
+	{
+		// LONG
+	});
+}
+
+
+# FPooledDynamicMeshVertexFactory::InitPrimitiveResource()
+ENQUEUE_RENDER_COMMAND(InitDynamicMeshVertexFactory)(
+[VertexFactory, PooledVertexBuffer](FRHICommandListImmediate& RHICmdList)
+{
+	// LONG
+});
+
+
+
+

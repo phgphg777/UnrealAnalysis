@@ -1,0 +1,47 @@
+
+class UEngine {};
+class ENGINE_API UGameEngine 		: public UEngine
+class UNREALED_API UEditorEngine 	: public UEngine
+class UNREALED_API UUnrealEdEngine 	: public UEditorEngine 
+
+
+
+// UnrealEdEngine.cpp
+class FEditorModeTools& GLevelEditorModeTools()
+{
+	static FEditorModeTools* EditorModeToolsSingleton = new FEditorModeTools;
+	return *EditorModeToolsSingleton;
+}
+
+// UnrealEdEngine.cpp
+FLevelEditorViewportClient* GCurrentLevelEditingViewportClient;
+
+// Launch.cpp (not LaunchEngineLoop.cpp)
+FEngineLoop	GEngineLoop;
+
+// UnrealEngine.cpp
+UEngine* GEngine;
+
+// EditorEngine.cpp
+UEditorEngine* GEditor;
+
+// UnrealEdGlobals.cpp (not UnrealEdEngine.cpp)
+UUnrealEdEngine* GUnrealEd;
+
+
+// LaunchEngineLoop.cpp
+if( !GIsEditor )
+{
+	GEngine = NewObject<UEngine>(GetTransientPackage(), EngineClass);
+}
+else
+{
+	GEngine = GEditor = GUnrealEd = NewObject<UUnrealEdEngine>(GetTransientPackage(), EngineClass);
+}
+
+
+GEngineLoop.Tick() -> GEngine->Tick() -> 
+UUnrealEdEngine::Tick() -> UEditorEngine::Tick() ->
+FLevelEditorViewportClient::Tick() -> FEditorViewportClient::Tick() -> 
+FEditorModeTools::Tick()
+

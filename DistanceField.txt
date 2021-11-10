@@ -1,0 +1,62 @@
+
+
+void FLevelOfDetailSettingsLayout::ApplyChanges()	// StaticMeshEditorTools.cpp
+{
+	UStaticMesh* StaticMesh = StaticMeshEditor.GetStaticMesh();
+
+	for (int32 LODIndex = 0; LODIndex < LODCount; ++LODIndex)
+	{
+		StaticMesh->SourceModels[LODIndex].BuildSettings = BuildSettingsWidgets[LODIndex]->GetSettings();
+		
+	}
+	StaticMesh->PostEditChangeProperty( FPropertyChangedEvent(NULL) )
+	{
+		Build(true);	// StaticMeshBuild.cpp
+		{
+			CacheDerivedData();		// StaticMesh.cpp
+			{
+				RenderData->Cache(UStaticMesh* Owner = this, LODSettings);
+				{
+					const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.GenerateMeshDistanceFields"));
+					if (CVar->GetValueOnGameThread() != 0 || Owner->bGenerateMeshDistanceField)
+					{
+						FMeshBuildSettings& BuildSettings = Owner->SourceModels[0].BuildSettings;
+						LODResources[0].DistanceFieldData ->
+							CacheDerivedData(, Owner, , BuildSettings.DistanceFieldResolutionScale, BuildSettings.bGenerateDistanceFieldAsIfTwoSided);
+					}
+				}
+			}
+		}
+	}
+}
+
+// DistanceFieldAtlas.cpp
+void FDistanceFieldVolumeData::CacheDerivedData(, UStaticMesh* Mesh, UStaticMesh* GenerateSource, float DistanceFieldResolutionScale, bool bGenerateDistanceFieldAsIfTwoSided)
+{
+	FAsyncDistanceFieldTask* NewTask = new FAsyncDistanceFieldTask;
+	NewTask->StaticMesh = Mesh;
+	NewTask->GenerateSource = GenerateSource;
+	NewTask->DistanceFieldResolutionScale = DistanceFieldResolutionScale;
+	NewTask->bGenerateDistanceFieldAsIfTwoSided = bGenerateDistanceFieldAsIfTwoSided;
+	
+	GDistanceFieldAsyncQueue->TaskQueue.Push(NewTask);
+}
+
+uint32 FBuildDistanceFieldThreadRunnable::Run()
+{
+	FAsyncDistanceFieldTask* Task = AsyncQueue.TaskQueue.Pop();
+	AsyncQueue.Build(Task, *WorkerThreadPool);
+	{
+		const FStaticMeshLODResources& LODModel = Task->GenerateSource->RenderData->LODResources[0];
+
+		MeshUtilities->GenerateSignedDistanceFieldVolumeData(
+			Task->StaticMesh->GetName(),
+			LODModel,
+			ThreadPool,
+			Task->MaterialBlendModes,
+			Task->GenerateSource->RenderData->Bounds,
+			Task->DistanceFieldResolutionScale,
+			Task->bGenerateDistanceFieldAsIfTwoSided,
+			*Task->GeneratedVolumeData);
+	}
+}

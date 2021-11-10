@@ -1,0 +1,70 @@
+BLEND_STATE
+
+Src : New computed color from pixel shader
+Dst : Stored color in rendertarget
+
+TStaticBlendState<CW_RGBA, ColorOp, ColorSrc, ColorDest, AlphaOp, AlphaSrc, AlphaDest>
+FinalColor.rgb = Src.rgb * ColorSrc (ColorOp) Dst.rgb * ColorDest;
+FinalColor.a = Src.a * AlphaSrc (AlphaOp) Dst.a * AlphaDest;
+
+
+TStaticBlendState<CW_RGBA, BO_Add, BF_SourceAlpha, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_One> 
+FinalColor.rgb = Src.rgb * Src.a + Dst.rgb * (1 - Src.a);
+FinalColor.a = Src.a * 0 + Dst.a * 1;
+
+TStaticBlendState<CW_RGB, BO_Add, BF_DestColor, BF_Zero, BO_Add, BF_Zero, BF_One>
+FinalColor.rgb = Src.rgb * Dst.rgb + Dst.rgb * 0; 	// = Src.rgb * Dst.rgb
+FinalColor.a = Src.a * 0 + Dst.a * 1;				// = Dst.a
+
+// FPostProcessBasePassAOPS
+TStaticBlendState<CW_RGBA, BO_Add, BF_DestColor, BF_Zero, BO_Add, BF_DestAlpha, BF_Zero>;
+FinalColor.rgb = Src.rgb * Dst.rgb;
+FinalColor.a = Src.a * Dst.rgb.a;
+
+// RenderFog
+TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha>
+FinalColor.rgb = Src.rgb + Dst.rgb * Src.a;
+FinalColor.a = Src.a;
+
+// VolumetricFogVoxelization
+TStaticBlendState<
+		CW_RGBA, BO_Add, BF_One, BF_One, BO_Add, BF_One, BF_One,
+		CW_RGBA, BO_Add, BF_One, BF_One, BO_Add, BF_One, BF_One>
+FinalColor[0].rgb = Src.rgb + Dst.rgb;
+FinalColor[0].a = Src.a + Dst.a;
+FinalColor[1].rgb = Src.rgb + Dst.rgb;
+FinalColor[1].a = Src.a + Dst.a;
+
+
+FGraphicsPipelineStateInitializer GraphicsPSOInit;
+
+GraphicsPSOInit.BlendState = 
+	TStaticBlendState< 
+		WriteMask, 
+		ColorOp, ColorSrc, ColorDst, 
+		AlphaOp, AlphaSrc, AlphaDst
+	>::GetRHI();
+
+SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit);
+{
+	RHICmdList.SetGraphicsPipelineState(PipelineState);
+	{
+		GetContext().RHISetGraphicsPipelineState(RHIGraphicsPipelineState);
+		{
+			IRHICommandContextPSOFallback::RHISetGraphicsPipelineState(GraphicsState);
+			{
+				FRHIGraphicsPipelineStateFallBack* FallbackGraphicsState = static_cast<FRHIGraphicsPipelineStateFallBack*>(GraphicsState);
+				FGraphicsPipelineStateInitializer& PsoInit = FallbackGraphicsState->Initializer;
+
+				RHISetBlendState(FallbackGraphicsState->Initializer.BlendState, FLinearColor(1.0f, 1.0f, 1.0f));
+				{
+					FD3D11BlendState* NewState = ResourceCast(NewStateRHI);
+					StateCache.SetBlendState(NewState->Resource, (const float*)&BlendFactor, 0xffffffff);
+					{
+						Direct3DDeviceIMContext->OMSetBlendState(State, BlendFactor, SampleMask);
+					}
+				}
+			}
+		}
+	}
+}

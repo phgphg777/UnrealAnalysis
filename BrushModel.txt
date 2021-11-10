@@ -1,0 +1,138 @@
+BRUSH
+
+
+class FPoly
+{
+	FVector				Base;					// Base point of polygon.
+	FVector				Normal;					// Normal of polygon.
+	TArray<FVector>		Vertices;
+	uint32				PolyFlags;				// FPoly & Bsp poly bit flags (PF_).
+	ABrush*				Actor;					// Brush where this originated, or NULL.
+	UMaterialInterface*	Material;				// Material.
+ };
+
+class UPolys : public UObject
+{
+	TArray<FPoly> Element;
+};
+
+class UModel : public UObject
+{
+	UPolys* Polys;
+}
+
+class ABrush : public AActor
+{
+	UModel* Brush;
+	UBrushComponent* BrushComponent;
+	UBrushBuilder* BrushBuilder;
+}
+
+class UBrushComponent : public UPrimitiveComponent
+{
+	UModel* Brush;
+	UBodySetup* BrushBodySetup;
+}
+
+class FBrushSceneProxy final : public FPrimitiveSceneProxy
+{
+	FLocalVertexFactory VertexFactory;
+	FModelWireIndexBuffer WireIndexBuffer;
+	FStaticMeshVertexBuffers VertexBuffers;
+
+	UBodySetup* BodySetup;
+}
+
+
+
+/**
+ * A set of BSP nodes which have the same material and relevant lights.
+ */
+class FModelElement
+{
+public:
+
+	/** The model component containing this element. */
+	class UModelComponent* Component;
+
+	/** The material used by the nodes in this element. */
+	class UMaterialInterface* Material;
+
+	/** The nodes in the element. */
+	TArray<uint16> Nodes;
+
+	FMeshMapBuildData* LegacyMapBuildData;
+
+	/** Uniquely identifies this component's built map data. */
+	FGuid MapBuildDataId;
+
+	/** A pointer to the index buffer holding this element's indices. */
+	FRawIndexBuffer16or32* IndexBuffer;
+
+	/** The first index in the component index buffer used by this element. */
+	uint32 FirstIndex;
+
+	/** The number of triangles contained by the component index buffer for this element. */
+	uint32 NumTriangles;
+
+	/** The lowest vertex index used by this element. */
+	uint32 MinVertexIndex;
+
+	/** The highest vertex index used by this element. */
+	uint32 MaxVertexIndex;
+
+	/** The bounding box of the vertices in the element. */
+	FBox BoundingBox;
+};
+
+class UModelComponent : public UPrimitiveComponent
+{
+	/** The BSP tree. */
+	UModel* Model;
+
+	/** The index of this component in the ULevel's ModelComponents array. */
+	int32 ComponentIndex;
+
+	/** Description of collision */
+	UBodySetup* ModelBodySetup;
+
+	/** The nodes which this component renders. */
+	TArray<uint16> Nodes;
+
+	/** The elements used to render the nodes. */
+	TIndirectArray<FModelElement> Elements;
+}
+
+class FElementInfo : public FLightCacheInterface
+{
+	/** The element's material. */
+	UMaterialInterface* Material;
+
+	/** Vertex factory uniform buffer. Needs to be per model element, so every element can have it's unique LODLightmapDataIndex. */
+	TUniformBufferRef<FLocalVertexFactoryUniformShaderParameters> VertexFactoryUniformBuffer;
+
+	/** The statically irrelevant lights for this element. */
+	TArray<FGuid> IrrelevantLights;
+
+	/** The element's bounding volume. */
+	FBoxSphereBounds Bounds;
+}
+
+struct FDynamicModelMeshBatch : public FMeshBatch
+{
+	int32 ModelElementIndex;
+	bool bIsSelectedBatch;
+};
+
+class FModelSceneProxy final : public FPrimitiveSceneProxy
+{
+	FLocalVertexFactory VertexFactory;
+
+	UModelComponent* Component;
+	
+	TArray<FElementInfo> Elements;
+
+	FMaterialRelevance MaterialRelevance;
+
+	FColoredMaterialRenderProxy CollisionMaterialInstance;
+}
